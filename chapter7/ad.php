@@ -8,11 +8,18 @@
 
 require("search.php");
 
+const AD_TYPE_CPA = 'cpa';
+const AD_TYPE_CPC = 'cpc';
+const AD_TYPE_CPM = 'cpm';
+
 const TO_ECPM = [
     'cpc' => 'cpc_to_ecpm',
     'cpa' => 'cpa_to_ecpm',
     'cpm' => 'lamb_to_ecpm',
 ];
+
+//cpm字典 [key:广告类型,value:cpm]
+$AVERAGE_PER_1K = [];
 
 function location_key($location_id){
     return sprintf("idx:req:%s",$location_id);
@@ -41,6 +48,21 @@ function views_ad_type_key($ad_type){
 }
 function views_ad_word_key($ad_id){
     return sprintf("views:%s",$ad_id);
+}
+function clicks_key($ad_id){
+    return sprintf("clicks:%s",$ad_id);
+}
+function actions_key($ad_id){
+    return sprintf("actions:%s",$ad_id);
+}
+function term_target_key($target_id){
+    return sprintf("terms:matched:%s",$target_id);
+}
+function action_counter_key($ad_type){
+    return sprintf("type:%s:actions",$ad_type);
+}
+function click_counter_key($ad_type){
+    return sprintf("type:%s:clicks:",$ad_type);
 }
 
 function cpc_to_ecpm($view,$clicks,$cpc){
@@ -116,7 +138,7 @@ function target_ads($conn,$locations,$content){
 }
 
 /**
- * 按位置匹配广告,找到所有广告,再交集value
+ * 按位置匹配广告和ecpm
  * @param $pipe
  * @param $locations
  * @return array
@@ -131,6 +153,14 @@ function match_location($pipe,$locations){
     return [$matched_ads,$matched_values];
 }
 
+/**
+ * 匹配关键词,重新计算ecmp
+ * @param $pipe
+ * @param $matched
+ * @param $base
+ * @param $content
+ * @return array
+ */
 function finish_scoring($pipe,$matched,$base,$content){
     $bonus_ecpm = [];
     $words = tokenize($content);
@@ -149,6 +179,13 @@ function finish_scoring($pipe,$matched,$base,$content){
     return [$words,$base];
 }
 
+/**
+ * 记录浏览数据
+ * @param $conn
+ * @param $target_id
+ * @param $ad_id
+ * @param $words
+ */
 function record_targeting_result($conn,$target_id,$ad_id,$words){
 
     $pipe = $conn->pipeline();
@@ -179,10 +216,92 @@ function record_targeting_result($conn,$target_id,$ad_id,$words){
     }
 }
 
+/**
+ * 记录点击数据
+ * @param $conn
+ * @param $target_id
+ * @param $ad_id
+ * @param bool $action
+ */
 function record_click($conn,$target_id,$ad_id,$action=false){
-    $pipeline = $conn->pipeline();
-    $click_key = sprintf('clicks:%s',$ad_id);
-    $match_key ='';
+    $pipe = $conn->pipeline();
+
+    $click_key = clicks_key($ad_id);
+    $match_key = term_target_key($target_id);
+    $type = $conn->hget(type_key(),$ad_id);
+    //匹配关键词的log数据,延长过期时间
+    if($type == AD_TYPE_CPA){
+        $pipe->expire($match_key,900);
+        if($action){
+            $click_key = actions_key($ad_id);
+        }
+    }
+
+    //类型广告点击计数器
+    if($action && $type == AD_TYPE_CPA){
+        $pipe->incr(action_counter_key($type));
+    }else{
+        $pipe->incr(click_counter_key($type));
+    }
+
+    //某广告关键词点击计数器
+    $words = $conn->smembers($match_key);
+    foreach($words as $word){
+        $pipe->zincrby($click_key,$word);
+    }
+    $pipe->execute();
+    update_cpms($conn,$ad_id);
+}
+
+function update_cpms($conn,$ad_id){
+    $pipe = $conn->pipeline();
+    //获取广告类型,cpm,关键词
+    $pipe->hget(type_key(),$ad_id);
+    $pipe->zscore(value_key(),$ad_id);
+    $pipe->smembers(term_key(),$ad_id);
+    list($type,$base_value,$words) = $pipe->execute();
+
+    //获取广告浏览数和点击数
+    $click_key = ($type == AD_TYPE_CPA) ? action_counter_key($type) : click_counter_key($type);
+    $pipe->get(views_ad_type_key($type));
+    $pipe->get($click_key);
+    list($type_views,$type_clicks) = $pipe->execute();
+
+    //计算cpm
+    $AVERAGE_PER_1K[$type] = 1000 * intval($type_clicks) / intval($type_views);
+
+    //某广告所有关键词的浏览数和点击数
+    $views_key = views_ad_word_key($ad_id);
+    $click_key = ($type == AD_TYPE_CPA) ? action_key($ad_id) : click_counter_key($ad_id);
+    $to_ecpm = TO_ECPM[$type];
+    $pipe->zscore($views_key,' ');
+    $pipe->zscore($click_key,' ');
+    list($ad_views,$ad_clicks) = $pipe->execute();
+
+    //计算广告ecpm
+    if(!$ad_clicks){
+        //无点击,使用原ecmp
+        $ad_ecmp = $conn->zscore(rvalue_key(),$ad_id);
+    }else{
+        $ad_ecmp = $to_ecpm($ad_views,$ad_clicks,$base_value);
+        $pipe->zadd(rvalue_key(),$ad_ecmp,$ad_id);
+    }
+
+    //计算关键词ecpm
+    foreach($words as $word){
+        //关键词的浏览数和点击数
+        $pipe->zscore($views_key,$word);
+        $pipe->zscore($click_key,$word);
+        list($views,$clicks) = array_slice($pipe->execute(),-1,2,true);
+        //无点击不处理
+        if(!$clicks){
+            continue;
+        }
+        $word_ecpm = $to_ecpm($views,$clicks,$base_value);
+        $bonus = $word_ecpm - $ad_ecmp;
+        $pipe->zadd(word_key($word),$bonus,$ad_id);
+    }
+    $pipe->execute();
 }
 
 $ad_id = 123;
