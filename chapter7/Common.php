@@ -8,7 +8,7 @@ namespace ad;
 class Common {
 
     //redis key的默认过期时间
-    const DEFAULT_TTL = 30;
+    const DEFAULT_TTL = 300;
 
     //redis pipeline是否立即执行
     const EXECUTE_TRUE = true;
