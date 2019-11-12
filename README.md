@@ -45,6 +45,7 @@ job4
 
 3.范围匹配
 ```
+//-1表示最后一个值,并且包含这个值返回
 >>> zrange skill:year 0 -1 withscores
 job1 1
 job2 2
@@ -64,4 +65,29 @@ job6 5
 job5 4
 job6 5
 
+```
+
+4.predis的watch
+```
+$trans = $conn->transaction(['cas'=>true]);
+try{
+    $trans->watch($key);
+    if($trans->get($key) == $value){
+        $trans->multi();
+        $trans->del($key);
+        $trans->exec();
+    }
+}catch (\Predis\Transaction\AbortedMultiExecException $e){
+    echo $e->getMessage();
+}
+
+//特别注意,以下方式的watch无效,还不知道为什么,todo 待看源码
+$conn->transaction(['watch'=>$key,'cas'=>true]);
+```
+
+常见报错集合
+```
+1.watch监控的key被修改,报如下错误
+The current transaction has been aborted by the server
+当前事务已被服务器中止
 ```

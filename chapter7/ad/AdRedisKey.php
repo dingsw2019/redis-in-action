@@ -4,8 +4,6 @@
  * 广告所有的redisKey
  */
 
-namespace ad;
-
 class AdRedisKey {
     /**
      * 地理位置

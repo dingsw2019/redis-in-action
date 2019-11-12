@@ -3,7 +3,8 @@
  * 通用类
  */
 
-namespace ad;
+
+require_once ("RedisClient.php");
 
 class Common {
 
@@ -25,9 +26,11 @@ class Common {
     private $cache_words = [];
     //运行模式,是否返回注释
     private $run_mode;
+    private $conn;
 
     public function __construct(string $mode)
     {
+        $this->conn = RedisClient::getConn();
         $this->run_mode = ($mode==self::MODE_REMARK) ? $mode : self::MODE_PURE;
     }
 
@@ -178,5 +181,60 @@ class Common {
             }
         }
         return !empty($diff_words) ? $diff_words : [];
+    }
+
+    /**
+     * 创建锁
+     * @param mixed $key
+     * @param int $acquire_timeout 请求时长
+     * @param int $lock_timeout 锁时效
+     * @return bool|string
+     */
+    public function acquire_lock_with_timeout($key,$acquire_timeout=10,$lock_timeout=10){
+
+        $key = "lock:{$key}";
+        $identifier = uniqid();
+        $end = microtime(true) + $acquire_timeout;
+        while( microtime(true) < $end ){
+            if($this->conn->setnx($key,$identifier)){
+                $this->conn->expire($key,$lock_timeout);
+                return $identifier;
+            }else if($this->conn->ttl($key) < 0){
+                $this->conn->expire($key,$lock_timeout);
+            }
+            usleep(1000);
+        }
+        return false;
+    }
+
+    /**
+     * 释放锁
+     * @param mixed $key
+     * @param mixed $value
+     * @return bool
+     * @throws \Predis\ClientException
+     * @throws \Predis\NotSupportedException
+     */
+    public function release_lock($key,$value){
+
+        $key = "lock:{$key}";
+        $trans = $this->conn->transaction(['cas'=>true]);
+        while(true){
+            try{
+                $trans->watch($key);
+                if($trans->get($key) == $value){
+                    $trans->multi();
+                    $trans->del($key);
+                    $trans->exec();
+                    return true;
+                }
+                $trans->unwatch();
+                break;
+            }catch (\Predis\Transaction\AbortedMultiExecException $e){
+                //pass
+            }
+        }
+
+        return false;
     }
 }
