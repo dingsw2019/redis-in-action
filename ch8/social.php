@@ -128,7 +128,7 @@ class SocialRedisKey {
     }
 
     /**
-     * 我关注的人,分组
+     * 关注组(存用户信息)
      * @param $list_id
      * @structure zset 有序集合
      * @member uid 被关注者
@@ -140,10 +140,10 @@ class SocialRedisKey {
     }
 
     /**
-     * 关注我的人
+     * 用户所在关注组(存组信息)
      * @param $uid
      * @structure zset 有序集合
-     * @member uid 被关注者ID
+     * @member list_id 关注组ID
      * @score time 关注的时间
      * @return string
      */
@@ -245,7 +245,7 @@ class Social {
      * @return mixed
      * @throws Exception
      */
-    public function create_status($uid,$message,$data){
+    private function create_status($uid,$message,$data){
         //获取login,生成消息ID
         list($login,$id) = $this->conn->pipeline(function($pipe) use ($uid){
             $pipe->hget(SocialRedisKey::user_info($uid),'login');
@@ -278,9 +278,9 @@ class Social {
      */
     public function get_status_message($uid,int $page=1,int $count=30){
         $start = ($page-1) * $count;
-        $end = $page*$count-1;
+        $stop = $page*$count-1;
         //获取主页消息(分页)
-        $messages_ids = $this->conn->zrevrange(SocialRedisKey::user_home($uid),$start,$end);
+        $messages_ids = $this->conn->zrevrange(SocialRedisKey::user_home($uid),$start,$stop);
         //获取消息详情
         $pipe = $this->conn->pipeline(['atomic'=>true]);
         foreach($messages_ids as $message_id){
@@ -429,9 +429,9 @@ class Social {
      */
     public function follow_user_list($uid,$other_id,$list_id){
 
-        //我关注的
+        //组内成员(存放关注的人)
         $fkey1 = SocialRedisKey::list_in($list_id);
-        //关注我的
+        //用户所在分组
         $fkey2 = SocialRedisKey::list_out($other_id);
 
         //是否关注
@@ -443,7 +443,7 @@ class Social {
         $now = time();
         //添加我关注的和关注我的,获取被关注者的最近1000条消息
         $pipe->zadd($fkey1,[$other_id=>$now]);
-        $pipe->zadd($fkey2,[$uid=>$now]);
+        $pipe->zadd($fkey2,[$list_id=>$now]);
         $pipe->zcard($fkey1);
         $pipe->zrevrange(SocialRedisKey::user_profile($other_id),0,self::HOME_TIMELINE_SIZE,['withscores'=>true]);
         list($following,$status_and_score) = array_slice($pipe->execute(),-2);
@@ -469,9 +469,9 @@ class Social {
      * @throws Exception
      */
     public function unfollow_user_list($uid,$other_id,$list_id){
-        //我的关注
+        //组内成员(存放关注的人)
         $fkey1 = SocialRedisKey::list_in($list_id);
-        //关注我的
+        //用户所在分组
         $fkey2 = SocialRedisKey::list_out($other_id);
 
         //未关注检查
@@ -483,7 +483,7 @@ class Social {
         $now = time();
         //删除我的关注和关注我的
         $pipe->zrem($fkey1,$other_id);
-        $pipe->zrem($fkey2,$uid);
+        $pipe->zrem($fkey2,$list_id);
         $pipe->zcard($fkey1);
         //获取被关注者所有状态消息
         $pipe->zrevrange(SocialRedisKey::user_profile($other_id),0,self::HOME_TIMELINE_SIZE-1);
@@ -564,7 +564,7 @@ class Social {
      * @param int $stop 关注我的人搜索范围终点
      * @throws Exception
      */
-    public function syndicate_status_in_range($uid,$post,$start,$stop){
+    private function syndicate_status_in_range($uid,$post,$start,$stop){
 
         //获取关注我的人
         $followers = $this->conn->zrange(SocialRedisKey::followers($uid),$start,$stop);
@@ -576,7 +576,115 @@ class Social {
         }
         $pipe->execute();
     }
+
+    /**
+     * 关注组同步消息
+     * @param int $uid
+     * @param array $post
+     * @throws Exception
+     */
+    public function syndicate_status_list($uid,$post){
+
+        $lists_id = $this->conn->zrange(SocialRedisKey::list_out($uid),0,'inf');
+        $pipe = $this->conn->pipeline();
+        foreach($lists_id as $list_id){
+            $pipe->zadd(SocialRedisKey::list_statuses($list_id),$post);
+            $pipe->zremrangebyrank(SocialRedisKey::list_statuses($list_id),0,-self::HOME_TIMELINE_SIZE-1);
+        }
+        $pipe->execute();
+    }
+
+    /**
+     * 删除消息
+     * @param $uid
+     * @param $msg_id
+     * @return bool|null
+     * @throws \Predis\ClientException
+     * @throws \Predis\NotSupportedException
+     */
+    public function delete_message($uid,$msg_id){
+
+        $key = SocialRedisKey::user_message($msg_id);
+        //申请锁
+        $locked = $this->commonClass->acquire_lock_with_timeout($key,1);
+        if(!$locked){
+            return null;
+        }
+        //检查用户是消息的创建者
+        $msg_info = $this->conn->hgetall(SocialRedisKey::user_message($msg_id));
+        if(!$msg_info or $msg_info['uid']!=$uid){
+            $this->commonClass->release_lock($key,$locked);
+            return false;
+        }
+
+        $pipe = $this->conn->pipeline();
+        //删除消息
+        $pipe->del(SocialRedisKey::user_message($msg_id));
+        //删除个人状态消息表的某消息
+        $pipe->zrem(SocialRedisKey::user_profile($uid),$msg_id);
+        //删除主页时间线的某消息
+        $pipe->zrem(SocialRedisKey::user_home($uid),$msg_id);
+        //减少用户信息的发送消息数
+        $pipe->hincrby(SocialRedisKey::user_info($uid),"posts",-1);
+        $pipe->execute();
+
+        $this->commonClass->release_lock($key,$locked);
+
+        $this->clean_timelines($uid,$msg_id);
+        return true;
+    }
+
+    /**
+     * 清除关注者的某个状态消息
+     * @param int $uid 消息创建者
+     * @param int $msg_id 消息ID
+     */
+    public function clean_timelines($uid,$msg_id){
+        $followers_count = $this->conn->zcard(SocialRedisKey::followers($uid));
+        $batches = ceil($followers_count / self::POSTS_PER_PASS);
+        $queue = new Queue();
+        for($batch=0;$batch<$batches;$batch++){
+            $start = $batch * self::POSTS_PER_PASS;
+            $stop = $start + self::POSTS_PER_PASS - 1;
+            if($batch == 0){
+                $this->clean_timelines_in_range($uid,$msg_id,$start,$stop);
+            }else{
+                $queue->execute_later("default","clean_timelines_in_range",
+                    [$uid,$msg_id,$start,$stop]);
+            }
+        }
+    }
+
+    /**
+     * 批量清除关注者的某个状态消息
+     * @param int $uid
+     * @param int $msg_id
+     * @param int $start
+     * @param int $stop
+     * @throws Exception
+     */
+    private function clean_timelines_in_range($uid,$msg_id,$start,$stop){
+
+        //获取关注者
+        $followers = $this->conn->zrange(SocialRedisKey::followers($uid),$start,$stop);
+        //删除关注者的某个消息
+        $pipe = $this->conn->pipeline();
+        foreach($followers as $follower){
+            $pipe->zrem(SocialRedisKey::user_home($follower),$msg_id);
+        }
+        $pipe->execute();
+    }
 }
 
 //$social = new Social();
 //$social->unfollow_user_list(1,2,3);
+
+//写消息
+//$social->post_status(1,'message content',3);
+
+//获取我的主页时间线
+//$statuses_data = $social->get_status_message(2);
+//var_dump($statuses_data);
+
+//删除消息
+//$social->delete_message(1,ch7);
