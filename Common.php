@@ -52,11 +52,7 @@ class Common {
         $pipe->expire($storeKey,$ttl);
         //是否立即执行
         if($execute){
-            list($store,$expire) = $pipe->execute();
-            if(!$store && !$expire){
-                return $storeKey;
-            }
-            return false;
+            $pipe->execute();
         }
         return $storeKey;
     }
@@ -87,12 +83,11 @@ class Common {
         //是否立即执行
         if($execute){
             list($store,$expire) = $pipe->execute();
-            if(!$store && !$expire){
+            if($store && $expire){
                 echo " [执行成功]" . PHP_EOL;
                 return $storeKey;
             }
             echo " [执行失败]".PHP_EOL;
-            return false;
         }
         echo " [延后执行]" . PHP_EOL;
         return $storeKey;
@@ -140,15 +135,17 @@ class Common {
      * @param int $len 可提取字符的最小长度
      * @return array
      */
-    private function content_to_word(string $content,$len = self::FILTER_STOP_WORD_LENGTH){
+    private function content_to_word(string $content,string $delimiter = ',',$len = self::FILTER_STOP_WORD_LENGTH){
 
         $id = md5($content);
         //提取关键词
         if(!isset($this->cache_words[$id])){
             $words = [];
-            $str = str_replace(' ','',strtolower($content));
-            if($str){
-                foreach(explode(',',$str) as $word){
+            if($delimiter !== ' '){
+                $content = str_replace(' ','',strtolower($content));
+            }
+            if($content){
+                foreach(explode($delimiter,$content) as $word){
                     if(strlen($word)>=$len && !isset($words[$word])){
                         $words[$word] = $word;
                     }
@@ -163,12 +160,13 @@ class Common {
 
     /**
      * 提取关键词并过滤停用词
-     * @param string $content miaoshu
+     * @param string $content 描述
+     * @param string $delimiter 切分符号
      * @return array
      */
-    public function tokenize(string $content){
-        $words = $this->content_to_word($content);
-        $stop_words = $this->content_to_word(self::STOP_WORDS);
+    public function tokenize(string $content,string $delimiter=','){
+        $words = $this->content_to_word($content,$delimiter);
+        $stop_words = $this->content_to_word(self::STOP_WORDS,',');
         $diff_words = array_diff($words,$stop_words);
         if($diff_words){
             $diff_words = array_values($diff_words);

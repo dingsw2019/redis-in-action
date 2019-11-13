@@ -4,11 +4,8 @@
  * todo redis的SortSet,存储float精度不准,会导致idx:ad:value:的score出错
  */
 require_once("../../RedisClient.php");
-require_once("../Common.php");
+require_once("../../Common.php");
 require_once("AdRedisKey.php");
-
-use ad\Common;
-use ad\AdRedisKey;
 
 class AdClassRemark {
 

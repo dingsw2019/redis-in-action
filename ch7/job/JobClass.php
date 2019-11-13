@@ -1,9 +1,8 @@
 <?php
 
 require_once("../../RedisClient.php");
-require_once("../Common.php");
+require_once("../../Common.php");
 
-use ad\Common;
 /**
  * 职位业务所需redisKey
  */

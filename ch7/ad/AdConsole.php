@@ -42,7 +42,7 @@ function rand_ad_type(){
  */
 function run(array $ads,string $mode){
 
-    if($mode == \ad\Common::MODE_REMARK){
+    if($mode == Common::MODE_REMARK){
         $adClass = new AdClassRemark($mode);
     }else{
         $adClass = new AdClassPure($mode);
@@ -71,7 +71,8 @@ function run(array $ads,string $mode){
         foreach($target_ids as $target_id){
             $adClass->record_click($target_id,$target_list[$target_id]);
         }
-        $modeStr = ($mode == \ad\Common::MODE_REMARK) ? "注释" : "纯净";
+
+        $modeStr = ($mode == Common::MODE_REMARK) ? "注释" : "纯净";
         echo "DONE,{$modeStr}版模式运行,曝光数[{$exposure}],点击数[{$click}]" . PHP_EOL;
     }
 }

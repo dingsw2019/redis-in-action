@@ -85,6 +85,19 @@ try{
 $conn->transaction(['watch'=>$key,'cas'=>true]);
 ```
 
+5.复合排序
+- 论坛文章基于更新时间和投票数量做倒叙排列
+```
+//更新时间的有序集合
+zadd update doc_id update_time
+//投票数的有序集合
+zadd vote doc_id vote_count
+//将搜索到的文章与更新时间和投票数做交集,分数相加
+zinterstore update_vote_sort 3 search_docs_id update vote weight 0 1 1
+//倒排分数
+zrevrange update_vote_sort 0 -1
+```
+
 常见报错集合
 ```
 1.watch监控的key被修改,报如下错误
