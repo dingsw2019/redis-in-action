@@ -56,7 +56,7 @@ class SocialRedisKey {
     }
 
     /**
-     * 用户主页消息表
+     * 用户消息表
      * @param int $msg_id 消息id
      * @structure hash
      * @field message 消息内容
@@ -80,7 +80,7 @@ class SocialRedisKey {
     }
 
     /**
-     * 用户个人消息表
+     * 用户个人状态消息时间线
      * @param int $uid 用户ID
      * @structure zset 有序集合
      * @member 消息ID
@@ -92,7 +92,7 @@ class SocialRedisKey {
     }
 
     /**
-     * 用户主页时间线
+     * 用户主页状态消息时间线
      * @param int $uid 用户ID
      * @structure zset 有序结合
      * @member msg_id 消息ID
@@ -181,6 +181,8 @@ class Social {
     const HOME_TIMELINE_SIZE = 1000;
     //填充主页的用户列表分页数量
     const REFILL_USERS_STEP = 50;
+    //最大用户同步数(用于分批同步状态消息)
+    const POSTS_PER_PASS = 1000;
     //redis-cli
     private $conn;
 
@@ -236,7 +238,7 @@ class Social {
     }
 
     /**
-     * 发送状态消息
+     * 创建状态消息
      * @param int $uid 用户ID
      * @param string $message 消息内容
      * @param $data
@@ -418,7 +420,7 @@ class Social {
     }
 
     /**
-     * 关注的人分组存储
+     * 关注(分组方式)
      * @param int $uid 关注者
      * @param int $other_id 被关注者
      * @param int $list_id 组ID
@@ -458,6 +460,14 @@ class Social {
         return true;
     }
 
+    /**
+     * 取消关注(分组方式)
+     * @param $uid
+     * @param $other_id
+     * @param $list_id
+     * @return bool|void
+     * @throws Exception
+     */
     public function unfollow_user_list($uid,$other_id,$list_id){
         //我的关注
         $fkey1 = SocialRedisKey::list_in($list_id);
@@ -491,6 +501,80 @@ class Social {
         $pipe->execute();
         return true;
 
+    }
+
+    /**
+     * 发送状态消息
+     * @param int $uid
+     * @param string $message
+     * @param $data
+     * @return mixed|null
+     * @throws Exception
+     */
+    public function post_status($uid,$message,$data){
+        //创建消息
+        $id = $this->create_status($uid,$message,$data);
+        if(!$id){
+            return null;
+        }
+        //获取创建消息时间
+        $post = $this->conn->hget(SocialRedisKey::user_message($id),"posted");
+        if(!$post){
+            return null;
+        }
+        //消息加入个人状态消息时间线
+        $status_data = [$id=>$post];
+        $this->conn->zadd(SocialRedisKey::user_profile($uid),$status_data);
+
+        //消息加入关注者的状态消息时间线
+        $this->syndicate_status($uid,$status_data);
+        return $id;
+    }
+
+    /**
+     * 分批同步状态消息给关注我的人
+     * @param int $uid 发消息的人
+     * @param array $post 消息ID和创建消息时间
+     */
+    public function syndicate_status($uid,$post){
+        //用户分段
+        $followers_count = $this->conn->zcard(SocialRedisKey::followers($uid));
+        $batches = ceil($followers_count/self::POSTS_PER_PASS);
+
+        $queue = new Queue();
+        for($batch=0;$batch<$batches;$batch++){
+            //计算开始结束
+            $start = $batch*self::POSTS_PER_PASS;
+            $stop = $start + self::POSTS_PER_PASS - 1;
+            if($batch == 0){
+                $this->syndicate_status_in_range($uid,$post,$start,$stop);
+            }else{
+                //1000之后的延迟处理
+                $queue->execute_later("default","syndicate_status_in_range",
+                    [$uid,$post,$start,$stop]);
+            }
+        }
+    }
+
+    /**
+     * 给一批人同步状态消息
+     * @param int $uid 发消息的人
+     * @param array $post 消息ID和创建消息时间
+     * @param int $start 关注我的人搜索范围起点
+     * @param int $stop 关注我的人搜索范围终点
+     * @throws Exception
+     */
+    public function syndicate_status_in_range($uid,$post,$start,$stop){
+
+        //获取关注我的人
+        $followers = $this->conn->zrange(SocialRedisKey::followers($uid),$start,$stop);
+        //给关注的人添加状态消息,保持状态消息在1000条
+        $pipe = $this->conn->pipeline(['atomic'=>true]);
+        foreach($followers as $follower){
+            $pipe->zadd(SocialRedisKey::user_home($follower),$post);
+            $pipe->zremrangebyrank(SocialRedisKey::user_home($follower),0,-self::HOME_TIMELINE_SIZE-1);
+        }
+        $pipe->execute();
     }
 }
 
