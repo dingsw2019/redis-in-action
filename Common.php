@@ -93,25 +93,25 @@ class Common {
         return $storeKey;
     }
 
-    public function sinterstore($conn,$keys,$options=[],$ttl=self::DEFAULT_TTL,$execute=self::EXECUTE_TRUE){
+    public function sinterstore($conn,$keys,$ttl=self::DEFAULT_TTL,$execute=self::EXECUTE_TRUE){
         if($this->run_mode == self::MODE_REMARK){
-            return self::common_submit_with_remark($conn,__FUNCTION__,$keys,$options,$ttl,$execute);
+            return self::common_submit_with_remark($conn,__FUNCTION__,$keys,[],$ttl,$execute);
         }else{
-            return self::common_submit($conn,__FUNCTION__,$keys,$options,$ttl,$execute);
+            return self::common_submit($conn,__FUNCTION__,$keys,[],$ttl,$execute);
         }
     }
-    public function sunionstore($conn,$keys,$options=[],$ttl=self::DEFAULT_TTL,$execute=self::EXECUTE_TRUE){
+    public function sunionstore($conn,$keys,$ttl=self::DEFAULT_TTL,$execute=self::EXECUTE_TRUE){
         if($this->run_mode == self::MODE_REMARK){
-            return self::common_submit_with_remark($conn,__FUNCTION__,$keys,$options,$ttl,$execute);
+            return self::common_submit_with_remark($conn,__FUNCTION__,$keys,[],$ttl,$execute);
         }else{
-            return self::common_submit($conn,__FUNCTION__,$keys,$options,$ttl,$execute);
+            return self::common_submit($conn,__FUNCTION__,$keys,[],$ttl,$execute);
         }
     }
-    public function sdiffstore($conn,$keys,$options=[],$ttl=self::DEFAULT_TTL,$execute=self::EXECUTE_TRUE){
+    public function sdiffstore($conn,$keys,$ttl=self::DEFAULT_TTL,$execute=self::EXECUTE_TRUE){
         if($this->run_mode == self::MODE_REMARK){
-            return self::common_submit_with_remark($conn,__FUNCTION__,$keys,$options,$ttl,$execute);
+            return self::common_submit_with_remark($conn,__FUNCTION__,$keys,[],$ttl,$execute);
         }else{
-            return self::common_submit($conn,__FUNCTION__,$keys,$options,$ttl,$execute);
+            return self::common_submit($conn,__FUNCTION__,$keys,[],$ttl,$execute);
         }
     }
     public function zinterstore($conn,$keys,$options=[],$ttl=self::DEFAULT_TTL,$execute=self::EXECUTE_TRUE){

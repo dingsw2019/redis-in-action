@@ -101,7 +101,7 @@ class AdClassPure {
             return AdRedisKey::location_key($location);
         },$locations);
         //匹配广告
-        $matched_ads = $this->commonClass->sunionstore($pipe,$keys,[],Common::DEFAULT_TTL,Common::EXECUTE_FALSE);
+        $matched_ads = $this->commonClass->sunionstore($pipe,$keys,Common::DEFAULT_TTL,Common::EXECUTE_FALSE);
         //以上广告的ecpm
         $matched_ecpm = $this->commonClass->zinterstore($pipe,[$matched_ads,AdRedisKey::ad_ecpm_key()],[],Common::DEFAULT_TTL,Common::EXECUTE_FALSE);
         return [$matched_ads,$matched_ecpm];
