@@ -58,11 +58,25 @@ class Search {
     private $conn;
     //class Common
     private $commonClass;
+    //string to score mapping
+    public $LOWER;
+    public $ALPHA;
+    public $LOWER_NUMERIC;
+    public $ALPHA_NUMERIC;
 
     public function __construct(string $mode = Common::MODE_PURE)
     {
         $this->conn = RedisClient::getConn();
         $this->commonClass = new Common($mode);
+
+        $ATOZ = range(ord('A'),ord('Z'));
+        $atoz = range(ord('a'),ord('z'));
+        $numeric = range(ord('0'),ord('9'));
+        //ascii与自定义序号的映射表
+        $this->LOWER = $this->to_char_map(array_merge($atoz,[-1]));//小写字母
+        $this->ALPHA = $this->to_char_map(array_merge($ATOZ,$atoz,[-1]));//大小写字母
+        $this->LOWER_NUMERIC = $this->to_char_map(array_merge($numeric,$atoz,[-1]));//数字与小写字母
+        $this->ALPHA_NUMERIC = $this->to_char_map(array_merge($numeric,$ATOZ,$atoz,[-1]));//数字与大小写字母
     }
 
     /**
@@ -157,14 +171,14 @@ class Search {
                 $syn = array_map(function($word){
                     return SearchRedisKey::index_word($word);
                 },$syn);
-                $to_intersect[] = $this->commonClass->sunionstore($this->conn,$syn,[],$ttl);
+                $to_intersect[] = $this->commonClass->sunionstore($this->conn,$syn,$ttl);
             }else{
                 $to_intersect[] = SearchRedisKey::index_word($syn[0]);
             }
         }
         //交集搜索词
         if(count($to_intersect)>1){
-            $intersect_result = $this->commonClass->sinterstore($this->conn,$to_intersect,[],$ttl);
+            $intersect_result = $this->commonClass->sinterstore($this->conn,$to_intersect,$ttl);
         }else{
             $intersect_result = $to_intersect[0];
         }
@@ -174,13 +188,14 @@ class Search {
                 return SearchRedisKey::index_word($word);
             },$unwatched);
             array_unshift($unwatched,$intersect_result);
-            return $this->commonClass->sdiffstore($this->conn,$unwatched,[],$ttl);
+            return $this->commonClass->sdiffstore($this->conn,$unwatched,$ttl);
         }
 
         return $intersect_result;
     }
 
     /**
+     * 搜索排序
      * @param string $query 搜索词
      * @param mixed $id 存储搜索结果的redisKey
      * @param int $ttl 搜索结果的有效时长
@@ -224,6 +239,7 @@ class Search {
     }
 
     /**
+     * 搜索复合排序
      * @param string $query 搜索词
      * @param mixed $id 存储搜索结果的redisKey
      * @param int $ttl 搜索结果的有效时长
@@ -258,16 +274,71 @@ class Search {
         //返回搜索结果数量,排序结果,搜索结果ID
         return [$search_count,$search_data,$id];
     }
+
+    /**
+     * 字符串转换为数字
+     * @param string $str 需转换的字符串
+     * @param bool $ignore_case 是否小写转换
+     * @return string
+     */
+    public function string_to_score(string $str,bool $ignore_case=false){
+        if($ignore_case){
+            $str = strtolower($str);
+        }
+        $pieces = array_map('ord',str_split(substr($str,0,6)));
+        while (count($pieces) < 6) {
+            array_push($pieces,-1);
+        }
+        $score = 0;
+        foreach($pieces as $piece){
+            $score = $score * 257 + $piece + 1;
+        }
+
+        return $score * 2 + (strlen($str) > 6);
+    }
+
+    //kv转换
+    public function to_char_map($set){
+        $out = [];
+        sort($set);
+        foreach($set as $pos => $val){
+            $out[$val] = $pos - 1;
+        }
+        return $out;
+    }
+
+    /**
+     * 通用字符转换分值
+     * @param string $str 转换字符
+     * @param array $mapping 字符库(大小写字母和数字)
+     * @return bool|float|int
+     */
+    public function string_to_score_generic(string $str,array $mapping){
+        $length = intval(52 / log(count($mapping),2));
+        $pieces = array_map('ord',str_split(substr($str,0,$length)));
+        while(count($pieces) < $length){
+            array_push($pieces,-1);
+        }
+
+        $score = 0;
+        foreach($pieces as $piece){
+            $value = $mapping[$piece];
+            $score = $score * count($mapping) + $value + 1;
+        }
+
+        return $score * 2 + (strlen($str) > $length);
+    }
 }
 
 
 
 $doc_list = [
-//    1001 => "There are moments in life when you miss someone so much that you just want to pick them from your dreams and hug them for real Dream what you want to dream go where you want to go be what you want to be because you have only one life and one chance to do all the things you want to do",
-//    1002 => "miss the furthest distance in the world Is not between life and death But when I stand in front of you Yet you don't know that I love you",
+    1001 => "There are moments in life when you miss someone so much that you just want to pick them from your dreams and hug them for real Dream what you want to dream go where you want to go be what you want to be because you have only one life and one chance to do all the things you want to do",
+    1002 => "miss the furthest distance in the world Is not between life and death But when I stand in front of you Yet you don't know that I love you",
     1003 => "miss The furthest distance in the world Is not when I stand in front of you Yet you can't see my love But when undoubtedly knowing the love from both Yet cannot be together"
 ];
 $search = new Search();
+
 //创建文档索引
 //foreach($doc_list as $doc_id => $content){
 //    $search->index_document($doc_id,$content);
@@ -285,16 +356,28 @@ $search = new Search();
 //var_dump($search_data);
 
 //更新时间和投票数的复合排序(倒叙)
-RedisClient::getConn()->zadd(SearchRedisKey::doc_update(),[
-    1001=>"1573642268",
-    1002=>"1573642244",
-    1003=>"1573642311",
-]);
-RedisClient::getConn()->zadd(SearchRedisKey::doc_vote(),[
-    1001=> 123,//1573642391
-    1002=> 321,//1573642565
-    1003=> 213,//1573642524
-]);
-list($search_count,$search_data,$search_id) = $search->search_and_zsort("miss");
-echo "搜索结果的数量:{$search_count} , 用于排序的搜索Key:[{$search_id}], 以下为排序结果" . PHP_EOL;
-var_dump($search_data);
+//RedisClient::getConn()->zadd(SearchRedisKey::doc_update(),[
+//    1001=>"1573642268",
+//    1002=>"1573642244",
+//    1003=>"1573642311",
+//]);
+//RedisClient::getConn()->zadd(SearchRedisKey::doc_vote(),[
+//    1001=> 123,//1573642391
+//    1002=> 321,//1573642565
+//    1003=> 213,//1573642524
+//]);
+//list($search_count,$search_data,$search_id) = $search->search_and_zsort("miss");
+//echo "搜索结果的数量:{$search_count} , 用于排序的搜索Key:[{$search_id}], 以下为排序结果" . PHP_EOL;
+//var_dump($search_data);
+
+//字符转换分值(固定6位长度)
+//$str = 'abc';
+//$score = $search->string_to_score($str);
+//echo "字符串:[{$str}],转换分值为:[{$score}]" . PHP_EOL;
+
+//字符转换分值(通用)
+//$str = 'abc';
+//$score = $search->string_to_score_generic($str,$search->ALPHA_NUMERIC);
+//echo "字符串:[{$str}],转换分值为:[{$score}]" . PHP_EOL;
+
+
