@@ -43,7 +43,7 @@ job2
 job4
 ```
 
-3.范围匹配
+3.有序集合,范围匹配
 ```
 //-1表示最后一个值,并且包含这个值返回
 >>> zrange skill:year 0 -1 withscores
@@ -54,13 +54,13 @@ job4 2
 job5 4
 job6 5
 
-# 匹配工作经验大于等于3年的
+// 匹配工作经验大于等于3年的
 >>> zrangebyscore skill:year 3 inf withscores
 job3 3
 job5 4
 job6 5
 
-# 匹配工作经验大于3年的
+// 匹配工作经验大于3年的,"("不能用于zrange
 >>> zrangebyscore skill:year (3 inf withscores
 job5 4
 job6 5
@@ -97,6 +97,18 @@ zinterstore update_vote_sort 3 search_docs_id update vote weight 0 1 1
 //倒排分数
 zrevrange update_vote_sort 0 -1
 ```
+6.sort排序
+- [跳转至Redis.Sort 中文手册](https://redis.readthedocs.io/en/2.4/key.html#sort)
+
+7.图书热销榜,只保留销量最高的5本图书
+```
+zadd hot:book 100 js 99 html 88 php 86 java 70 c
+// 售出一本photoshop,其累计售出71本
+zadd hot:book 71 ps
+zremrangebyrank hot:book 0 -6
+```
+
+
 
 常见报错集合
 ```

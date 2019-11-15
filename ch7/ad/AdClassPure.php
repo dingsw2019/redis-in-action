@@ -1,6 +1,6 @@
 <?php
 /**
- * 广告类注释版,输出redis命令,中文注释
+ * 广告类纯净版
  * todo redis的SortSet,存储float精度不准,会导致idx:ad:value:的score出错
  */
 require_once("../../RedisClient.php");
