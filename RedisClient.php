@@ -29,4 +29,12 @@ class RedisClient{
 
         return self::$instance;
     }
+
+    public static function config_get(){
+
+    }
+
+    public static function config_set(){
+
+    }
 }
