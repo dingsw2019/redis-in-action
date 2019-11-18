@@ -85,13 +85,9 @@ class Article{
     //redis-cli
     private $conn;
 
-    //class Common
-    private $commonClass;
-
-    public function __construct(string $mode = Common::MODE_PURE)
+    public function __construct()
     {
         $this->conn = RedisClient::getConn();
-        $this->commonClass = new Common($mode);
     }
 
     /**
