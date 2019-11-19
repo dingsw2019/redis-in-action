@@ -1,7 +1,7 @@
 <?php
 
 require_once ("../RedisClient.php");
-require_once ("../ch8/social.php");
+require_once("../ch08/social.php");
 
 class QueueRedisKey{
 

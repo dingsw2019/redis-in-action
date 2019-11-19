@@ -1,6 +1,6 @@
 <?php
 require_once ("../RedisClient.php");
-require_once ("../ch7/search/search.php");
+require_once ("../ch07/search/search.php");
 
 $conn = RedisClient::getConn();
 

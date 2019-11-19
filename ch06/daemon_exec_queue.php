@@ -5,7 +5,7 @@
  */
 
 require_once ("./queue.php");
-require_once ("../ch8/social.php");
+require_once("../ch08/social.php");
 
 $queue_name = "default";
 $callbacks = new Social();
